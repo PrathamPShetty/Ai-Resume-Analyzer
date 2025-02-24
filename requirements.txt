@@ -1,0 +1,9 @@
+ollama
+fastapi[all]
+langchain
+
+uvicorn
+pydantic
+jinja2
+
+
