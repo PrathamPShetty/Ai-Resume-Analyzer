@@ -1,111 +1,97 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
-import logging
-import ollama
-from langchain_core.prompts import PromptTemplate
-
-# Initialize FastAPI application
-app = FastAPI()
-
-# Set up Jinja2 template directory for rendering HTML pages
-templates = Jinja2Templates(directory="templates")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Define the Pydantic model for incoming case details
-class CaseDetails(BaseModel):
-    case_description: str = Field(
-        ..., 
-        example="Mack and Ana were seen arguing at the bungee jumping site before Mack's death. Mackenzie was also present with nunchaku."
-    )
-
-# Base template for legal case analysis
-base_template = """
-You are an AI Legal Advisor tasked with analyzing legal cases based on the Indian Penal Code (IPC).
-
-**Case Description**: {description}
-
-### Instructions for Case Analysis:
-1. **Identify the suspect(s)**: Who are the possible suspects in this case?
+import streamlit as st
+import requests
+import json
 
 
-
-Please respond with your analysis in the following format:
-- Suspect(s): [Name of suspects]
+API_URL = "http://127.0.0.1:8000"
 
 
-"""
+st.set_page_config(
+    page_title="Resume Skill Analyzer",
+    page_icon="📄",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("📄 Resume Skill Analyzer")
+st.write("Upload your resumes to analyze skills mentioned in the documents.")
 
 
-def ai_judge(prompt: str) -> str:
-    """
-    Function to interact with the AI Judge model for legal case analysis.
-    
-    Args:
-        prompt (str): The case description to analyze.
+st.sidebar.header("🔍 How It Works")
+st.sidebar.write("1. Upload multiple resumes (PDF/DOCX)\n2. We analyze key skills\n3. View detected skills instantly")
 
-    Returns:
-        str: The structured judgment from the model.
-    """
-    # Prepare the message payload for the API call
-    formatted_prompt = create_case_prompt_template(prompt)
-    messages = [{'role': 'user', 'content': formatted_prompt}]
-    
-    try:
-        # Call the AI model
-        response = ollama.chat(model='llama3.2:1b', messages=messages)
 
-        if 'message' in response and 'content' in response['message']:
-            return response['message']['content']
+uploaded_files = st.file_uploader("Upload Resumes (PDF/DOCX)", type=["pdf", "docx"], accept_multiple_files=True)
+
+if uploaded_files:
+    files_data = [("files", (file.name, file.getvalue())) for file in uploaded_files]
+
+    with st.spinner("🔍 Analyzing resumes..."):
+        response = requests.post(f"{API_URL}/upload", files=files_data)
+
+    if response.status_code == 200:
+        results = response.json()["uploaded_files"]
+        for res in results:
+            st.subheader(f"📌 Analysis Report for {res['filename']}")
+            st.write(f"**Word Count:** {res['analysis']['word_count']}")
+            st.write(f"**Extracted Skills:** {', '.join(res['analysis']['found_skills']) if res['analysis']['found_skills'] else 'No skills detected'}")
+            st.write(f"**Suggestions:** {res['analysis']['suggestions']}")
+            st.divider()
+    else:
+        st.error(f"⚠️ Error: {response.json().get('error', 'Unknown error occurred')}")
+
+
+st.sidebar.subheader("📁 View Selected Resumes")
+
+if st.sidebar.button("Get Selected Resumes"):
+    response = requests.get(f"{API_URL}/getAllSelected")
+
+    if response.status_code == 200:
+        data = response.json()
+        selected_files = data.get("selected_files", [])
+
+        if selected_files:
+            st.sidebar.write("📌 **Selected Resumes:**")
+            for file in selected_files:
+                resume_url = f"{API_URL}/download/{file}" 
+                
+                # Displaying clickable links
+                st.sidebar.markdown(f"📄 [{file}]({resume_url})", unsafe_allow_html=True)
+
+                # Optional: Adding a direct download button
+                download_response = requests.get(resume_url)
+                if download_response.status_code == 200:
+                    st.sidebar.download_button(
+                        label=f"⬇ Download {file}",
+                        data=download_response.content,
+                        file_name=file,
+                        mime="application/pdf"  # Change if files are not PDFs
+                    )
+                else:
+                    st.sidebar.error(f"❌ Unable to fetch {file}")
+
         else:
-            raise ValueError("Unexpected response structure.")
+            st.sidebar.write("🚫 No selected resumes found.")
+    else:
+        st.sidebar.error("❌ Failed to fetch selected resumes!")
 
-    except Exception as e:
-        raise RuntimeError(f"An error occurred: {str(e)}")
 
-def create_case_prompt_template(description: str) -> str:
-    """
-    Create a prompt template for legal case analysis based on the IPC.
 
-    Args:
-        description (str): The user's case description.
+st.sidebar.subheader("🔧 Admin Panel")
+new_skills = st.sidebar.text_area("Enter skills (comma-separated)", "Python, Machine Learning, AI, TensorFlow")
+if st.sidebar.button("Update Skills"):
+    skill_list = [skill.strip() for skill in new_skills.split(",")]
+    response = requests.post(f"{API_URL}/admin", json={"skill": skill_list})
+    if response.status_code == 200:
+        st.sidebar.success("✅ Skills updated successfully!")
+    else:
+        st.sidebar.error("❌ Failed to update skills!")
 
-    Returns:
-        str: A formatted prompt string ready for the legal AI system.
-    """
-    prompt_template = PromptTemplate(input_variables=["description"], template=base_template)
-    return prompt_template.format(description=description)
 
-# FastAPI routes
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-  
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.post("/evaluate")
-async def evaluate_case(case: CaseDetails):
-  
-    
-    try:
-        # Use the AI judge engine to evaluate the case
-        evaluation_result = ai_judge(case.case_description)
-
-        logger.info(f"Evaluation Result: {evaluation_result}")
-        return JSONResponse(content={"evaluation_result": evaluation_result})
-
-    except Exception as e:
-        logger.error(f"Error evaluating case: {str(e)}")
-        raise HTTPException(status_code=500, detail="An error occurred while evaluating the case.")
-
-@app.get("/healthcheck")
-async def healthcheck():
-       return JSONResponse(content={"status": "healthy"})
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+st.sidebar.subheader("🚀 Server Status")
+if st.sidebar.button("Check API Health"):
+    response = requests.get(f"{API_URL}/healthcheck")
+    if response.status_code == 200:
+        st.sidebar.success(f"🟢 {response.json()['status']} - {response.json()['timestamp']}")
+    else:
+        st.sidebar.error("❌ Server is down!")
