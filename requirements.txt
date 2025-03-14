@@ -1,10 +1,10 @@
-ollama
-fastapi[all]
-langchain
+# ollama
+# fastapi[all]
+# langchain
 
-uvicorn
-pydantic
-jinja2
+# uvicorn
+# pydantic
+# jinja2
 
 streamlit
 
