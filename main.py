@@ -98,6 +98,7 @@ async def upload_resume(files: list[UploadFile] = File(...)):
         # Extract text based on file type
         if file.filename.endswith(".pdf"):
             text = extract_text_from_pdf(contents)
+            print(text)
         elif file.filename.endswith(".docx"):
             text = extract_text_from_docx(contents)
         else:
